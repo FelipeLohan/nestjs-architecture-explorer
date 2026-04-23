@@ -1,11 +1,21 @@
-import { useEffect, useRef } from 'react';
-import cytoscape from 'cytoscape';
-import type { Core, NodeSingular } from 'cytoscape';
-import dagre from 'cytoscape-dagre';
-import { buildElements } from '../cytoscape-builder';
+import { useCallback, useMemo } from 'react';
+import {
+  ReactFlow,
+  Background,
+  Controls,
+  Handle,
+  Position,
+  useNodesState,
+  useEdgesState,
+  MarkerType,
+  BackgroundVariant,
+  type Node,
+  type Edge,
+  type NodeProps,
+} from '@xyflow/react';
+import '@xyflow/react/dist/style.css';
+import dagre from '@dagrejs/dagre';
 import type { ArchitectureMap, SelectedNode } from '../types';
-
-cytoscape.use(dagre);
 
 const KIND_COLOR: Record<string, string> = {
   module:     '#6366f1',
@@ -13,146 +23,172 @@ const KIND_COLOR: Record<string, string> = {
   provider:   '#f59e0b',
 };
 
+const NODE_SIZE: Record<string, { w: number; h: number }> = {
+  module:     { w: 160, h: 44 },
+  controller: { w: 150, h: 36 },
+  provider:   { w: 150, h: 36 },
+};
+
+function sizeOf(kind: string) {
+  return NODE_SIZE[kind] ?? NODE_SIZE.provider;
+}
+
+function ArchNode({ data, selected }: NodeProps) {
+  const kind = data.kind as string;
+  const color = KIND_COLOR[kind] ?? '#52525b';
+  const { w, h } = sizeOf(kind);
+  const isModule = kind === 'module';
+
+  return (
+    <div style={{
+      width: w,
+      height: h,
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      padding: '0 12px',
+      boxSizing: 'border-box',
+      borderRadius: isModule ? 10 : 8,
+      border: `${selected ? 2 : 1.5}px solid ${color}`,
+      background: `color-mix(in srgb, ${color} ${selected ? 22 : 12}%, #09090b)`,
+      color: '#fafafa',
+      fontSize: isModule ? 12 : 11,
+      fontWeight: isModule ? 600 : 400,
+      fontFamily: "'Inter', system-ui, sans-serif",
+      cursor: 'pointer',
+      userSelect: 'none',
+    }}>
+      <Handle type="target" position={Position.Top}    style={{ opacity: 0, width: 1, height: 1 }} />
+      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        {data.label as string}
+      </span>
+      <Handle type="source" position={Position.Bottom} style={{ opacity: 0, width: 1, height: 1 }} />
+    </div>
+  );
+}
+
+const nodeTypes = { archNode: ArchNode };
+
+function buildElements(map: ArchitectureMap): { nodes: Node[]; edges: Edge[] } {
+  const nodes: Node[] = [];
+  const edges: Edge[] = [];
+  const seen = new Set<string>();
+
+  const addNode = (id: string, kind: string) => {
+    if (seen.has(id)) return;
+    seen.add(id);
+    const { w, h } = sizeOf(kind);
+    nodes.push({
+      id,
+      type: 'archNode',
+      position: { x: 0, y: 0 },
+      data: { label: id, kind },
+      style: { width: w, height: h },
+    });
+  };
+
+  for (const mod of map.modules) {
+    addNode(mod.name, 'module');
+    for (const c of mod.controllers) addNode(c, 'controller');
+    for (const p of mod.providers)   addNode(p, 'provider');
+  }
+  for (const c of map.controllers) addNode(c.name, 'controller');
+  for (const p of map.providers)   addNode(p.name, 'provider');
+
+  const containsMarker = { type: MarkerType.ArrowClosed, color: '#52525b', width: 10, height: 10 };
+  const injectsMarker  = { type: MarkerType.ArrowClosed, color: '#f97316', width: 10, height: 10 };
+
+  for (const mod of map.modules) {
+    for (const c of mod.controllers) {
+      edges.push({ id: `c-${mod.name}-${c}`, source: mod.name, target: c,
+        type: 'smoothstep', markerEnd: containsMarker,
+        style: { stroke: '#52525b', strokeWidth: 1 } });
+    }
+    for (const p of mod.providers) {
+      edges.push({ id: `c-${mod.name}-${p}`, source: mod.name, target: p,
+        type: 'smoothstep', markerEnd: containsMarker,
+        style: { stroke: '#52525b', strokeWidth: 1 } });
+    }
+  }
+
+  for (const comp of [...map.controllers, ...map.providers]) {
+    for (const dep of comp.dependencies) {
+      if (seen.has(dep)) {
+        edges.push({ id: `i-${comp.name}-${dep}`, source: comp.name, target: dep,
+          type: 'smoothstep', markerEnd: injectsMarker,
+          style: { stroke: '#f97316', strokeWidth: 1.5, strokeDasharray: '6 3' } });
+      }
+    }
+  }
+
+  // Dagre layout
+  const g = new dagre.graphlib.Graph();
+  g.setDefaultEdgeLabel(() => ({}));
+  g.setGraph({ rankdir: 'TB', nodesep: 80, ranksep: 120, marginx: 40, marginy: 40 });
+
+  for (const n of nodes) {
+    const { w, h } = sizeOf(n.data.kind as string);
+    g.setNode(n.id, { width: w, height: h });
+  }
+  for (const e of edges) g.setEdge(e.source, e.target);
+  dagre.layout(g);
+
+  for (const n of nodes) {
+    const pos = g.node(n.id);
+    const { w, h } = sizeOf(n.data.kind as string);
+    n.position = { x: pos.x - w / 2, y: pos.y - h / 2 };
+  }
+
+  return { nodes, edges };
+}
+
 interface Props {
   map: ArchitectureMap;
   onSelect: (node: SelectedNode | null) => void;
 }
 
 export function ArchGraph({ map, onSelect }: Props) {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const cyRef = useRef<Core | null>(null);
+  const { nodes: ln, edges: le } = useMemo(() => buildElements(map), [map]);
+  const [nodes, , onNodesChange] = useNodesState(ln);
+  const [edges, , onEdgesChange] = useEdgesState(le);
 
-  useEffect(() => {
-    if (!containerRef.current) return;
-
-    const cy = cytoscape({
-      container: containerRef.current,
-      elements: buildElements(map),
-      style: [
-        {
-          selector: 'node',
-          style: {
-            label: 'data(label)',
-            'background-color': (ele: NodeSingular) => KIND_COLOR[ele.data('kind')] ?? '#52525b',
-            'background-opacity': 0.15,
-            'border-width': 1.5,
-            'border-color': (ele: NodeSingular) => KIND_COLOR[ele.data('kind')] ?? '#52525b',
-            color: '#fafafa',
-            'font-size': 10,
-            'font-family': "'Inter', system-ui, sans-serif",
-            'text-valign': 'center',
-            'text-halign': 'center',
-            'text-wrap': 'none',
-            width: (ele: NodeSingular) => {
-              const label = (ele.data('label') as string) ?? '';
-              const min = ele.data('kind') === 'module' ? 110 : 90;
-              return Math.max(min, label.length * 6.5 + 24);
-            },
-            height: (ele: NodeSingular) => ele.data('kind') === 'module' ? 40 : 32,
-            shape: 'round-rectangle',
-          },
-        },
-        {
-          selector: 'node:selected',
-          style: {
-            'background-opacity': 0.35,
-            'border-width': 2,
-          },
-        },
-        {
-          selector: 'node:active',
-          style: { 'overlay-opacity': 0 },
-        },
-        {
-          selector: 'edge[kind="contains"]',
-          style: {
-            width: 1,
-            'line-color': '#3f3f46',
-            'target-arrow-color': '#3f3f46',
-            'target-arrow-shape': 'triangle',
-            'arrow-scale': 0.8,
-            'curve-style': 'bezier',
-          },
-        },
-        {
-          selector: 'edge[kind="injects"]',
-          style: {
-            width: 1.5,
-            'line-color': '#f97316',
-            'target-arrow-color': '#f97316',
-            'target-arrow-shape': 'triangle',
-            'arrow-scale': 0.8,
-            'curve-style': 'taxi',
-            'taxi-direction': 'auto',
-            'taxi-turn': '60%',
-            'line-style': 'dashed',
-            'line-dash-pattern': [6, 3],
-          },
-        },
-      ],
-      layout: {
-        name: 'dagre',
-        rankDir: 'TB',
-        nodeSep: 60,
-        edgeSep: 10,
-        rankSep: 100,
-        marginx: 20,
-        marginy: 12,
-        ranker: 'network-simplex',
-        spacingFactor: 1.5,
-        padding: 48,
-        fit: true,
-      } as cytoscape.LayoutOptions,
-    });
-
-    cy.on('tap', 'node', (evt) => {
-      const node = evt.target as NodeSingular;
-      const kind = node.data('kind') as string;
-      const name = node.data('id') as string;
-      if (kind === 'module') {
-        const mod = map.modules.find((m) => m.name === name);
-        if (mod) onSelect({ kind: 'module', data: mod });
-      } else {
-        const component = map.controllers.find((c) => c.name === name) ?? map.providers.find((p) => p.name === name);
-        if (component) onSelect({ kind: 'component', data: component });
-      }
-    });
-    cy.on('tap', (evt) => { if (evt.target === cy) onSelect(null); });
-
-    cyRef.current = cy;
-    return () => cy.destroy();
-  }, [map]);
-
-  const fit    = () => cyRef.current?.fit(undefined, 32);
-  const zoomIn  = () => cyRef.current?.zoom({ level: (cyRef.current?.zoom() ?? 1) * 1.25, renderedPosition: { x: (containerRef.current?.clientWidth ?? 0) / 2, y: (containerRef.current?.clientHeight ?? 0) / 2 } });
-  const zoomOut = () => cyRef.current?.zoom({ level: (cyRef.current?.zoom() ?? 1) * 0.8, renderedPosition: { x: (containerRef.current?.clientWidth ?? 0) / 2, y: (containerRef.current?.clientHeight ?? 0) / 2 } });
+  const onNodeClick = useCallback((_: React.MouseEvent, node: Node) => {
+    const kind = node.data.kind as string;
+    const name = node.id;
+    if (kind === 'module') {
+      const mod = map.modules.find((m) => m.name === name);
+      if (mod) onSelect({ kind: 'module', data: mod });
+    } else {
+      const comp =
+        map.controllers.find((c) => c.name === name) ??
+        map.providers.find((p) => p.name === name);
+      if (comp) onSelect({ kind: 'component', data: comp });
+    }
+  }, [map, onSelect]);
 
   return (
-    <div style={{ position: 'relative', flex: 1, background: 'var(--bg)' }}>
-      <div ref={containerRef} style={{ width: '100%', height: '100%' }} />
-
-      {/* Legend */}
-      <div style={{ position: 'absolute', bottom: 16, left: 16, background: 'var(--surface)', border: '1px solid var(--surface2)', borderRadius: 8, padding: '8px 12px', display: 'flex', flexDirection: 'column', gap: 6 }}>
-        {Object.entries(KIND_COLOR).map(([kind, color]) => (
-          <span key={kind} style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 11, color: 'var(--muted)' }}>
-            <span style={{ width: 10, height: 10, borderRadius: 2, background: color, opacity: .9, flexShrink: 0 }} />
-            {kind}
-          </span>
-        ))}
-        <span style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 11, color: 'var(--muted)' }}>
-          <span style={{ width: 18, borderTop: '2px dashed #f97316', flexShrink: 0 }} />
-          injects
-        </span>
-      </div>
-
-      {/* Zoom controls */}
-      <div style={{ position: 'absolute', bottom: 16, right: 16, display: 'flex', flexDirection: 'column', gap: 4 }}>
-        {([['+', zoomIn], ['−', zoomOut], ['⊡', fit]] as const).map(([label, fn]) => (
-          <button key={label} onClick={fn as () => void} style={{ width: 30, height: 30, background: 'var(--surface)', color: 'var(--muted)', border: '1px solid var(--surface2)', borderRadius: 6, cursor: 'pointer', fontSize: 14, display: 'flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1 }}>
-            {label}
-          </button>
-        ))}
-      </div>
+    <div style={{ flex: 1, height: '100%' }}>
+      <ReactFlow
+        nodes={nodes}
+        edges={edges}
+        onNodesChange={onNodesChange}
+        onEdgesChange={onEdgesChange}
+        onNodeClick={onNodeClick}
+        onPaneClick={() => onSelect(null)}
+        nodeTypes={nodeTypes}
+        fitView
+        fitViewOptions={{ padding: 0.15 }}
+        minZoom={0.1}
+        maxZoom={2.5}
+        nodesConnectable={false}
+        proOptions={{ hideAttribution: true }}
+      >
+        <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="#27272a" />
+        <Controls
+          showInteractive={false}
+          style={{ background: 'var(--surface)', border: '1px solid var(--surface2)', borderRadius: 8 }}
+        />
+      </ReactFlow>
     </div>
   );
 }
