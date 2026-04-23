@@ -155,14 +155,30 @@ function buildElements(map: ArchitectureMap): { nodes: Node[]; edges: Edge[] } {
   /* contains edges */
   const containsMarker = { type: MarkerType.ArrowClosed, color: '#3f3f46', width: 10, height: 10 };
   for (const mod of map.modules) {
+    // Module → Controller always
     for (const c of mod.controllers)
       edges.push({ id: `c-${mod.name}-${c}`, source: mod.name, target: c,
         type: 'smoothstep', markerEnd: containsMarker,
         style: { stroke: '#3f3f46', strokeWidth: 1 } });
-    for (const p of mod.providers)
-      edges.push({ id: `c-${mod.name}-${p}`, source: mod.name, target: p,
-        type: 'smoothstep', markerEnd: containsMarker,
-        style: { stroke: '#3f3f46', strokeWidth: 1 } });
+
+    // Collect providers already reachable via controllers/providers in this module
+    const mediatedProviders = new Set<string>();
+    for (const ctrlName of mod.controllers) {
+      const ctrl = map.controllers.find((c) => c.name === ctrlName);
+      ctrl?.dependencies.forEach((dep) => mediatedProviders.add(dep));
+    }
+    for (const provName of mod.providers) {
+      const prov = map.providers.find((p) => p.name === provName);
+      prov?.dependencies.forEach((dep) => mediatedProviders.add(dep));
+    }
+
+    // Module → Provider only when no component in the module already mediates the relationship
+    for (const p of mod.providers) {
+      if (!mediatedProviders.has(p))
+        edges.push({ id: `c-${mod.name}-${p}`, source: mod.name, target: p,
+          type: 'smoothstep', markerEnd: containsMarker,
+          style: { stroke: '#3f3f46', strokeWidth: 1 } });
+    }
   }
 
   /* injects edges — animated */
