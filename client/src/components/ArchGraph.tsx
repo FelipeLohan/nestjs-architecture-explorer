@@ -152,43 +152,40 @@ function buildElements(map: ArchitectureMap): { nodes: Node[]; edges: Edge[] } {
     addNode(p.name, 'provider', deps ? `${deps} deps` : undefined);
   }
 
+  /* injects edges — built first so they become the source of truth for suppression */
+  const injectsMarker  = { type: MarkerType.ArrowClosed, color: '#f97316', width: 10, height: 10 };
+  // injectSources: for each provider, the set of components that inject it
+  const injectSources = new Map<string, Set<string>>();
+  for (const comp of [...map.controllers, ...map.providers]) {
+    for (const dep of comp.dependencies) {
+      if (!seen.has(dep)) continue;
+      edges.push({ id: `i-${comp.name}-${dep}`, source: comp.name, target: dep,
+        type: 'smoothstep', animated: true, markerEnd: injectsMarker,
+        style: { stroke: '#f97316', strokeWidth: 1.5 } });
+      if (!injectSources.has(dep)) injectSources.set(dep, new Set());
+      injectSources.get(dep)!.add(comp.name);
+    }
+  }
+
   /* contains edges */
   const containsMarker = { type: MarkerType.ArrowClosed, color: '#3f3f46', width: 10, height: 10 };
   for (const mod of map.modules) {
+    const moduleMembers = new Set([...mod.controllers, ...mod.providers]);
+
     // Module → Controller always
     for (const c of mod.controllers)
       edges.push({ id: `c-${mod.name}-${c}`, source: mod.name, target: c,
         type: 'smoothstep', markerEnd: containsMarker,
         style: { stroke: '#3f3f46', strokeWidth: 1 } });
 
-    // Collect providers already reachable via controllers/providers in this module
-    const mediatedProviders = new Set<string>();
-    for (const ctrlName of mod.controllers) {
-      const ctrl = map.controllers.find((c) => c.name === ctrlName);
-      ctrl?.dependencies.forEach((dep) => mediatedProviders.add(dep));
-    }
-    for (const provName of mod.providers) {
-      const prov = map.providers.find((p) => p.name === provName);
-      prov?.dependencies.forEach((dep) => mediatedProviders.add(dep));
-    }
-
-    // Module → Provider only when no component in the module already mediates the relationship
+    // Module → Provider only if no member of this module already injects it
     for (const p of mod.providers) {
-      if (!mediatedProviders.has(p))
+      const sources = injectSources.get(p);
+      const isMediated = sources ? [...sources].some((s) => moduleMembers.has(s)) : false;
+      if (!isMediated)
         edges.push({ id: `c-${mod.name}-${p}`, source: mod.name, target: p,
           type: 'smoothstep', markerEnd: containsMarker,
           style: { stroke: '#3f3f46', strokeWidth: 1 } });
-    }
-  }
-
-  /* injects edges — animated */
-  const injectsMarker = { type: MarkerType.ArrowClosed, color: '#f97316', width: 10, height: 10 };
-  for (const comp of [...map.controllers, ...map.providers]) {
-    for (const dep of comp.dependencies) {
-      if (seen.has(dep))
-        edges.push({ id: `i-${comp.name}-${dep}`, source: comp.name, target: dep,
-          type: 'smoothstep', animated: true, markerEnd: injectsMarker,
-          style: { stroke: '#f97316', strokeWidth: 1.5 } });
     }
   }
 
