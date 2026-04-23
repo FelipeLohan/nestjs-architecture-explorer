@@ -1,7 +1,7 @@
 import { Injectable, OnModuleInit } from '@nestjs/common';
 import { DiscoveryService, ModuleRef, ModulesContainer } from '@nestjs/core';
 import { InstanceWrapper } from '@nestjs/core/injector/instance-wrapper';
-import { ArchitectureMap, ComponentNode, ModuleNode } from './explorer.types';
+import { ArchitectureMap, ComponentNode, ModuleNode, RouteInfo } from './explorer.types';
 
 const INTERNAL_NAMES = new Set([
   'ModuleRef',
@@ -105,7 +105,39 @@ export class ArchitectureScanner implements OnModuleInit {
       type,
       scope: this.resolveScopeName(wrapper.scope),
       dependencies,
+      routes: type === 'controller' ? this.extractRoutes(metatype) : undefined,
     };
+  }
+
+  private extractRoutes(metatype: NewableFunction): RouteInfo[] {
+    const HTTP_METHOD: Record<number, string> = {
+      0: 'GET', 1: 'POST', 2: 'PUT', 3: 'DELETE', 4: 'PATCH',
+      5: 'ALL', 6: 'OPTIONS', 7: 'HEAD',
+    };
+
+    const rawBase = Reflect.getMetadata('path', metatype) as string | string[] | undefined ?? '';
+    const base = Array.isArray(rawBase) ? rawBase[0] : rawBase;
+
+    const proto = metatype.prototype as Record<string, unknown>;
+    const routes: RouteInfo[] = [];
+
+    for (const key of Object.getOwnPropertyNames(proto)) {
+      if (key === 'constructor') continue;
+      const fn = proto[key];
+      if (typeof fn !== 'function') continue;
+
+      const httpMethod = Reflect.getMetadata('method', fn) as number | undefined;
+      const rawPath = Reflect.getMetadata('path', fn) as string | string[] | undefined;
+      if (httpMethod === undefined || rawPath === undefined) continue;
+
+      const paths = Array.isArray(rawPath) ? rawPath : [rawPath];
+      for (const p of paths) {
+        const full = `/${base}/${p}`.replace(/\/+/g, '/').replace(/(?!^)\/$/, '');
+        routes.push({ method: HTTP_METHOD[httpMethod] ?? 'UNKNOWN', path: full });
+      }
+    }
+
+    return routes;
   }
 
   private resolveScopeName(scope: number | symbol | undefined): string {

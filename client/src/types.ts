@@ -1,8 +1,14 @@
+export interface RouteInfo {
+  method: string;
+  path: string;
+}
+
 export interface ComponentNode {
   name: string;
   type: 'controller' | 'provider';
   scope: string;
   dependencies: string[];
+  routes?: RouteInfo[];
 }
 
 export interface ModuleNode {

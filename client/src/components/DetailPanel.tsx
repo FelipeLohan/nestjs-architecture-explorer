@@ -1,4 +1,15 @@
-import type { SelectedNode } from '../types';
+import type { RouteInfo, SelectedNode } from '../types';
+
+const METHOD_COLOR: Record<string, string> = {
+  GET:     '#10b981',
+  POST:    '#3b82f6',
+  PUT:     '#f59e0b',
+  PATCH:   '#8b5cf6',
+  DELETE:  '#ef4444',
+  ALL:     '#71717a',
+  OPTIONS: '#71717a',
+  HEAD:    '#71717a',
+};
 
 interface Props {
   selected: SelectedNode | null;
@@ -50,12 +61,18 @@ function ModuleDetail({ data }: { data: { name: string; controllers: string[]; p
   );
 }
 
-function ComponentDetail({ data }: { data: { name: string; type: string; scope: string; dependencies: string[] } }) {
+function ComponentDetail({ data }: { data: { name: string; type: string; scope: string; dependencies: string[]; routes?: RouteInfo[] } }) {
   const color = data.type === 'controller' ? 'var(--controller)' : 'var(--provider)';
   return (
     <>
       <NodeHeader icon={KIND_ICON[data.type] ?? '◈'} name={data.name} typeLabel={data.type} typeColor={color} scopeLabel={SCOPE_LABEL[data.scope] ?? data.scope} />
       <Divider />
+      {data.type === 'controller' && (
+        <Section title="Endpoints" count={data.routes?.length ?? 0}>
+          {(data.routes ?? []).map((r) => <RouteItem key={`${r.method}:${r.path}`} route={r} />)}
+        </Section>
+      )}
+      {data.type === 'controller' && <Divider />}
       <Section title="Dependências" count={data.dependencies.length}>
         {data.dependencies.map((d) => <Item key={d} label={d} color="var(--inject)" />)}
       </Section>
@@ -88,6 +105,18 @@ function Section({ title, count, children }: { title: string; count: number; chi
       {count === 0
         ? <span style={{ fontSize: 12, color: 'var(--subtle)' }}>—</span>
         : <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>{children}</div>}
+    </div>
+  );
+}
+
+function RouteItem({ route }: { route: RouteInfo }) {
+  const color = METHOD_COLOR[route.method] ?? '#71717a';
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '5px 8px', background: 'var(--surface2)', borderRadius: 6 }}>
+      <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: '.04em', color, background: `color-mix(in srgb, ${color} 15%, transparent)`, border: `1px solid color-mix(in srgb, ${color} 30%, transparent)`, borderRadius: 4, padding: '1px 5px', flexShrink: 0 }}>
+        {route.method}
+      </span>
+      <span style={{ fontSize: 11, fontFamily: 'monospace', color: 'var(--muted)', wordBreak: 'break-all' }}>{route.path}</span>
     </div>
   );
 }
