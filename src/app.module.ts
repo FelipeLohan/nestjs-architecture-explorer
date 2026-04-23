@@ -4,9 +4,7 @@ import { AppService } from './app.service';
 import { ExplorerModule } from './explorer/explorer.module';
 
 @Module({
-  imports: [
-    ExplorerModule.forRoot({ enabled: true }),
-  ],
+  imports: [ExplorerModule.forRoot({ enabled: true })],
   controllers: [AppController],
   providers: [AppService],
 })
