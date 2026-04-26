@@ -1,6 +1,6 @@
 {
   "name": "nestjs-arch-explorer",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "description": "Plug-and-play NestJS library that inspects the DI container at runtime and displays an interactive architecture graph dashboard.",
   "author": "FelipeLohan",
   "license": "MIT",
