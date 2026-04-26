@@ -58,9 +58,11 @@ ExplorerModule.forRoot({
   enabled?:       boolean;       // default: true
   apiPath?:       string;        // default: 'explorer-data'
   dashboardPath?: string;        // default: 'arch'
-  guardFn?:       () => boolean; // optional security hook
+  guardFn?:       () => boolean; // called on every JSON API request; returns false → 403
 })
 ```
+
+> **Note:** `guardFn` protects the JSON endpoint (`/explorer-data`). The dashboard static assets (`/arch`) are always served so the UI can display an error message when access is denied.
 
 ### Example — custom paths + guard
 
@@ -99,13 +101,15 @@ interface ModuleNode {
 interface ComponentNode {
   name:         string;
   type:         'controller' | 'provider';
-  scope:        'DEFAULT' | 'TRANSIENT' | 'REQUEST';
+  scope:        'DEFAULT'    // Singleton (shared instance)
+              | 'TRANSIENT'  // new instance per injection
+              | 'REQUEST';   // new instance per request
   dependencies: string[];
-  routes?:      RouteInfo[];
+  routes?:      RouteInfo[]; // only present on controllers
 }
 
 interface RouteInfo {
-  method: string; // 'GET' | 'POST' | 'PUT' | ...
+  method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'OPTIONS' | 'HEAD' | 'ALL';
   path:   string;
 }
 ```
