@@ -2,7 +2,7 @@ import { useCallback, useMemo, useRef, useState } from 'react';
 import {
   ReactFlow, Background, Controls, MiniMap, Panel,
   useNodesState, useEdgesState, BackgroundVariant,
-  type Node,
+  type Node, type Edge,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import type { ArchitectureMap, SelectedNode } from '../types';
@@ -21,6 +21,54 @@ function buildElements(map: ArchitectureMap) {
   return { nodes: applyDagreLayout(raw, edges), edges };
 }
 
+/**
+ * Directional 2-hop traversal — mirrors the architecture hierarchy:
+ *   module     → contains children → providers those children inject
+ *   controller → parent module    + providers it injects
+ *   provider   → injectors        → modules of those injectors
+ */
+function computeHighlightedIds(
+  hoveredId: string,
+  hoveredKind: string,
+  edges: Edge[],
+): Set<string> {
+  const ids = new Set([hoveredId]);
+  const inject   = (e: Edge) => !!e.animated;   // orange inject arrows
+  const contains = (e: Edge) => !e.animated;    // gray contains arrows
+
+  if (hoveredKind === 'module') {
+    // hop 1: direct children (controllers + providers) via contains edges
+    const children = new Set<string>();
+    for (const e of edges)
+      if (contains(e) && e.source === hoveredId) { ids.add(e.target); children.add(e.target); }
+
+    // hop 2: providers those children inject
+    for (const e of edges)
+      if (inject(e) && children.has(e.source)) ids.add(e.target);
+
+  } else if (hoveredKind === 'controller') {
+    // hop 1 up: module that owns this controller
+    for (const e of edges)
+      if (contains(e) && e.target === hoveredId) ids.add(e.source);
+
+    // hop 1 down: providers this controller injects
+    for (const e of edges)
+      if (inject(e) && e.source === hoveredId) ids.add(e.target);
+
+  } else {
+    // provider — hop 1: everything that injects this provider
+    const injectors = new Set<string>();
+    for (const e of edges)
+      if (inject(e) && e.target === hoveredId) { ids.add(e.source); injectors.add(e.source); }
+
+    // hop 2: modules that own those injectors + any module that directly contains this provider
+    for (const e of edges)
+      if (contains(e) && (injectors.has(e.target) || e.target === hoveredId)) ids.add(e.source);
+  }
+
+  return ids;
+}
+
 interface Props {
   map: ArchitectureMap;
   onSelect: (node: SelectedNode | null) => void;
@@ -33,36 +81,27 @@ export function ArchGraph({ map, onSelect }: Props) {
   const [edges, , onEdgesChange] = useEdgesState(le);
 
   /* ── hover state ──────────────────────────────────────────── */
-  const [hoveredId, setHoveredId] = useState<string | null>(null);
+  const [hovered, setHovered] = useState<{ id: string; kind: string } | null>(null);
 
-  const highlightedIds = useMemo(() => {
-    if (!hoveredId) return new Set<string>();
-    const ids = new Set([hoveredId]);
-    for (const e of edges) {
-      if (e.source === hoveredId) ids.add(e.target);
-      if (e.target === hoveredId) ids.add(e.source);
-    }
-    return ids;
-  }, [hoveredId, edges]);
+  const highlightedIds = useMemo(
+    () => hovered ? computeHighlightedIds(hovered.id, hovered.kind, edges) : new Set<string>(),
+    [hovered, edges],
+  );
 
   const displayEdges = useMemo(() => {
-    if (!hoveredId) return edges;
+    if (!hovered) return edges;
     return edges.map((e) => {
-      const connected = e.source === hoveredId || e.target === hoveredId;
-      return connected
-        ? { ...e, style: { ...e.style, opacity: 1 } }
-        : { ...e, style: { ...e.style, opacity: 0.06 } };
+      const lit = highlightedIds.has(e.source) && highlightedIds.has(e.target);
+      return { ...e, style: { ...e.style, opacity: lit ? 1 : 0.06 } };
     });
-  }, [hoveredId, edges]);
+  }, [hovered, highlightedIds, edges]);
 
   /* ── handlers ─────────────────────────────────────────────── */
   const onNodeMouseEnter = useCallback((_: React.MouseEvent, node: Node) => {
-    setHoveredId(node.id);
+    setHovered({ id: node.id, kind: node.data.kind as string });
   }, []);
 
-  const onNodeMouseLeave = useCallback(() => {
-    setHoveredId(null);
-  }, []);
+  const onNodeMouseLeave = useCallback(() => setHovered(null), []);
 
   const onNodeClick = useCallback((_: React.MouseEvent, node: Node) => {
     const kind = node.data.kind as string;
@@ -91,7 +130,7 @@ export function ArchGraph({ map, onSelect }: Props) {
 
   /* ── render ───────────────────────────────────────────────── */
   return (
-    <HoverContext.Provider value={{ hoveredId, highlightedIds }}>
+    <HoverContext.Provider value={{ hoveredId: hovered?.id ?? null, highlightedIds }}>
       <div ref={graphRef} style={{ flex: 1, height: '100%' }}>
         <ReactFlow
           nodes={nodes} edges={displayEdges}
