@@ -13,7 +13,27 @@
   color: #fafafa;
   cursor: pointer;
   user-select: none;
-  transition: box-shadow .15s;
+  transition: box-shadow .15s, opacity .18s, background .18s;
+}
+
+/* node is hovered — strong glow */
+.arch-node--hovered {
+  border-width: 2px;
+  background: color-mix(in srgb, var(--node-color) 28%, #09090b);
+  box-shadow:
+    0 0 0 3px  color-mix(in srgb, var(--node-color) 35%, transparent),
+    0 0 18px   color-mix(in srgb, var(--node-color) 22%, transparent);
+}
+
+/* node is a direct neighbour of the hovered node */
+.arch-node--neighbour {
+  background: color-mix(in srgb, var(--node-color) 16%, #09090b);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--node-color) 20%, transparent);
+}
+
+/* node has no relation to the hovered node */
+.arch-node--dimmed {
+  opacity: 0.12;
 }
 
 .arch-node--module  { border-radius: 12px; }
