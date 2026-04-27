@@ -1,17 +1,24 @@
 import { Controller, Get, Req, Res, Type } from '@nestjs/common';
 import type { Request, Response } from 'express';
 import { join, normalize } from 'path';
+import { readFileSync } from 'fs';
 
 const PUBLIC_DIR = join(__dirname, '..', 'public');
 
 export function createDashboardController(
   dashboardPath: string,
 ): Type<unknown> {
+  const indexHtml = readFileSync(join(PUBLIC_DIR, 'index.html'), 'utf-8').replace(
+    '<head>',
+    `<head><base href="/${dashboardPath}/">`,
+  );
+
   @Controller(dashboardPath)
   class DashboardController {
     @Get()
     serveIndex(@Res() res: Response) {
-      res.sendFile(join(PUBLIC_DIR, 'index.html'));
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
+      res.send(indexHtml);
     }
 
     @Get('*path')
@@ -22,6 +29,13 @@ export function createDashboardController(
         : req.path.slice(1);
 
       const safe = normalize(rawPath).replace(/^(\.\.\/|\.\.\\)+/, '');
+
+      if (!safe || safe === '.') {
+        res.setHeader('Content-Type', 'text/html; charset=utf-8');
+        res.send(indexHtml);
+        return;
+      }
+
       const filePath = join(PUBLIC_DIR, safe);
 
       res.sendFile(filePath, (err) => {
